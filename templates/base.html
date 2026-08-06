@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Управление ботом{% endblock %} · Наталья Щапова</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='admin.css') }}">
+</head>
+<body>
+  <aside class="sidebar">
+    <a class="brand" href="{{ url_for('dashboard') }}"><span class="brand-mark">NS</span><span>Панель бота<small>Наталья Щапова</small></span></a>
+    <nav>
+      <a class="{{ 'active' if request.endpoint == 'dashboard' }}" href="{{ url_for('dashboard') }}"><span>⌂</span> Обзор</a>
+      <a class="{{ 'active' if request.endpoint in ('users','user_detail') }}" href="{{ url_for('users') }}"><span>◉</span> Пользователи</a>
+      <a class="{{ 'active' if request.endpoint == 'leads' }}" href="{{ url_for('leads') }}"><span>◇</span> Заявки</a>
+      <a class="{{ 'active' if request.endpoint in ('texts','text_edit') }}" href="{{ url_for('texts') }}"><span>✎</span> Тексты бота</a>
+    </nav>
+    <form method="post" action="{{ url_for('logout') }}" class="logout">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit">Выйти</button>
+    </form>
+  </aside>
+  <main class="main">
+    <header class="topbar"><div><span class="eyebrow">VK LONG POLL</span><h1>{% block heading %}Панель управления{% endblock %}</h1></div><span class="online"><i></i> Система активна</span></header>
+    {% with items = get_flashed_messages(with_categories=true) %}{% if items %}<div class="flashes">{% for category, message in items %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}</div>{% endif %}{% endwith %}
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>
