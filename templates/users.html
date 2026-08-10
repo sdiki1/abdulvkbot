@@ -1,3 +1,31 @@
-{% extends 'base.html' %}{% block title %}Пользователи{% endblock %}{% block heading %}Пользователи{% endblock %}{% block content %}
-<form class="filters" method="get"><input type="search" name="q" value="{{ query }}" placeholder="Имя, VK ID или ник"><select name="status"><option value="all" {{ 'selected' if status=='all' }}>Все пользователи</option><option value="active" {{ 'selected' if status=='active' }}>Активные за сутки</option><option value="lead" {{ 'selected' if status=='lead' }}>Оставили заявку</option></select><button class="button" type="submit">Найти</button></form>
-<article class="panel"><div class="panel-head"><div><h2>База диалогов</h2><p>Найдено: {{ users|length }}</p></div></div>{% include '_user_table.html' %}</article>{% endblock %}
+{% extends 'base.html' %}
+{% block title %}Пользователи{% endblock %}
+{% block eyebrow %}База диалогов{% endblock %}
+{% block heading %}Пользователи{% endblock %}
+{% block actions %}
+<a class="button" href="{{ url_for('users_export', **request.args) }}">Выгрузить CSV</a>
+{% endblock %}
+{% block content %}
+<form class="filters" method="get">
+  <input type="search" name="q" value="{{ filters.q }}" placeholder="Имя, VK ID или ник">
+  <select name="status">
+    <option value="all" {{ 'selected' if filters.status == 'all' }}>Все пользователи</option>
+    <option value="active" {{ 'selected' if filters.status == 'active' }}>Активные за сутки</option>
+    <option value="lead" {{ 'selected' if filters.status == 'lead' }}>Оставили заявку</option>
+    <option value="silent" {{ 'selected' if filters.status == 'silent' }}>Замолчали, получают напоминания</option>
+  </select>
+  <select name="stage">
+    <option value="all" {{ 'selected' if filters.stage == 'all' }}>Любой этап</option>
+    {% for row in stages %}
+    <option value="{{ row.state }}" {{ 'selected' if filters.stage == row.state }}>{{ row.state|stage }} ({{ row.count }})</option>
+    {% endfor %}
+  </select>
+  <button class="button" type="submit">Найти</button>
+</form>
+<article class="panel">
+  <div class="panel-head">
+    <div><h2>Найдено пользователей: {{ users|length }}</h2><p>Показываются последние 300 по времени активности</p></div>
+  </div>
+  {% include '_user_table.html' %}
+</article>
+{% endblock %}

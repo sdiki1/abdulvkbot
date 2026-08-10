@@ -1,0 +1,60 @@
+{% extends 'base.html' %}
+{% block title %}Настройки{% endblock %}
+{% block eyebrow %}Конфигурация{% endblock %}
+{% block heading %}Настройки бота{% endblock %}
+{% block actions %}
+<form method="post" action="{{ url_for('settings_check') }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <button class="button" type="submit">Проверить связь с ВК</button>
+</form>
+{% endblock %}
+{% block content %}
+<p class="page-intro">
+  Значения хранятся в базе и дублируются в файл <code>.env</code>{% if not env_present %} — сейчас файл рядом с панелью не найден, поэтому сохранение идёт только в базу{% endif %}.
+  Ссылки, получатели заявок и напоминания бот подхватывает в течение минуты; поля с пометкой «нужен перезапуск» применяются после рестарта.
+</p>
+<form method="post" class="settings-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  {% for group_title, group_hint, fields in groups %}
+  <article class="panel settings-group">
+    <div class="panel-head">
+      <div>
+        <h2>{{ group_title }}</h2>
+        <p>{{ group_hint }}</p>
+      </div>
+    </div>
+    <div class="field-grid">
+      {% for item in fields %}
+      {% set current = state[item.key] %}
+      <label class="field{{ ' wide' if item.kind in ('url', 'secret') }}">
+        <span class="field-label">
+          {{ item.label }}
+          {% if item.restart %}<span class="chip warn">нужен перезапуск: {{ item.restart }}</span>
+          {% else %}<span class="chip live">применяется сразу</span>{% endif %}
+        </span>
+        {% if item.kind == 'choice' %}
+          <select name="{{ item.key }}">
+            {% for choice in item.choices %}<option value="{{ choice }}" {{ 'selected' if current.value == choice }}>{{ choice }}</option>{% endfor %}
+          </select>
+        {% elif item.kind == 'secret' %}
+          <input type="password" name="{{ item.key }}" autocomplete="new-password" placeholder="Сейчас: {{ current.display }} — оставьте пустым, чтобы не менять">
+        {% else %}
+          <input name="{{ item.key }}" value="{{ current.value }}" {{ 'required' if item.required }}
+                 inputmode="{{ 'numeric' if item.kind == 'int' else 'text' }}">
+        {% endif %}
+        <span class="field-foot">
+          <code>{{ item.key }}</code>
+          <span class="source source-{{ 'panel' if current.source == 'панель' else 'env' }}">источник: {{ current.source }}</span>
+        </span>
+        {% if item.hint %}<span class="field-hint">{{ item.hint }}</span>{% endif %}
+      </label>
+      {% endfor %}
+    </div>
+  </article>
+  {% endfor %}
+  <div class="sticky-actions">
+    <span class="muted">Секретные поля не показываются целиком — их видно только по последним символам.</span>
+    <button class="button primary" type="submit">Сохранить настройки</button>
+  </div>
+</form>
+{% endblock %}

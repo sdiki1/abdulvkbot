@@ -28,6 +28,56 @@ LOG = logging.getLogger("vk-osteopath-bot")
 MSK = timezone(timedelta(hours=3))
 
 
+# Порядок ключей задаёт порядок шагов в воронке админ-панели.
+STATE_TITLES = {
+    "main": "Главное меню",
+    "osteo_problem": "Выбор проблемы",
+    "osteo_custom_problem": "Описывает проблему словами",
+    "osteo_history": "Рассказывает историю болезни",
+    "expertise": "Знакомство с врачом",
+    "process": "Как проходит приём",
+    "faq": "Частые вопросы",
+    "osteo_actions": "Выбор действия",
+    "services": "Услуги и пакеты",
+    "booking_city": "Выбор города",
+    "booking_confirm": "Ожидает подтверждения записи",
+    "aroma_format": "Формат ароматестирования",
+    "events": "Мероприятия",
+    "lead_contact": "Ожидание контактов",
+    "done": "Заявка оставлена",
+}
+LEAD_STATUSES = {
+    "new": "Новая",
+    "in_work": "В работе",
+    "booked": "Записан",
+    "rejected": "Отказ",
+}
+DEFAULT_REACTIVATION_HOURS = (6.0, 24.0, 72.0)
+
+
+def state_title(state: str) -> str:
+    return STATE_TITLES.get(state, state or "Главное меню")
+
+
+def config_value(key: str, default: str, overrides: dict[str, str] | None = None) -> str:
+    """Значение из админ-панели важнее .env; пустая строка означает «взять из .env»."""
+    override = (overrides or {}).get(key, "").strip()
+    return override or os.getenv(key, default).strip()
+
+
+def parse_hours(raw: str) -> tuple[float, ...]:
+    hours: list[float] = []
+    for item in raw.replace(" ", "").split(","):
+        try:
+            value = float(item)
+        except ValueError:
+            continue
+        if value > 0:
+            hours.append(value)
+    hours = hours[:len(DEFAULT_REACTIVATION_HOURS)]
+    return tuple(hours) + DEFAULT_REACTIVATION_HOURS[len(hours):]
+
+
 @dataclass(frozen=True)
 class Settings:
     token: str
@@ -37,27 +87,34 @@ class Settings:
     reports_url: str
     admin_ids: tuple[int, ...]
     db_path: str
+    reactivation_hours: tuple[float, ...] = DEFAULT_REACTIVATION_HOURS
 
     @classmethod
-    def from_env(cls) -> "Settings":
-        token = os.getenv("VK_GROUP_TOKEN", "").strip()
-        group_id = os.getenv("VK_GROUP_ID", "").strip()
+    def load(cls, overrides: dict[str, str] | None = None) -> "Settings":
+        token = config_value("VK_GROUP_TOKEN", "", overrides)
+        group_id = config_value("VK_GROUP_ID", "", overrides)
         if not token or not group_id:
             raise RuntimeError("Заполните VK_GROUP_TOKEN и VK_GROUP_ID в .env")
         admins = tuple(
             int(item.strip())
-            for item in os.getenv("ADMIN_VK_IDS", "").split(",")
-            if item.strip()
+            for item in config_value("ADMIN_VK_IDS", "", overrides).split(",")
+            if item.strip().lstrip("-").isdigit()
         )
         return cls(
             token=token,
             group_id=int(group_id),
-            dikidi_url=os.getenv("DIKIDI_URL", "https://dikidi.net/").strip(),
-            events_url=os.getenv("EVENTS_URL", "https://dikidi.net/").strip(),
-            reports_url=os.getenv("REPORTS_URL", "https://vk.com/").strip(),
+            dikidi_url=config_value("DIKIDI_URL", "https://dikidi.net/", overrides),
+            events_url=config_value("EVENTS_URL", "https://dikidi.net/", overrides),
+            reports_url=config_value("REPORTS_URL", "https://vk.com/", overrides),
             admin_ids=admins,
+            # Путь к базе берём только из окружения: в ней же лежат остальные настройки.
             db_path=os.getenv("DB_PATH", "bot.sqlite3"),
+            reactivation_hours=parse_hours(config_value("REACTIVATION_HOURS", "", overrides)),
         )
+
+    @classmethod
+    def from_env(cls) -> "Settings":
+        return cls.load()
 
 
 class Storage:
@@ -95,19 +152,29 @@ class Storage:
                 updated_at TEXT NOT NULL
             )
         """)
+        self._execute("""
+            CREATE TABLE IF NOT EXISTS bot_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+
+    @staticmethod
+    def _add_columns(conn: sqlite3.Connection, table: str, additions: dict[str, str]) -> None:
+        columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        for name, declaration in additions.items():
+            if name not in columns:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {declaration}")
 
     def _migrate(self) -> None:
         with self.lock, self._connect() as conn:
-            columns = {row["name"] for row in conn.execute("PRAGMA table_info(users)")}
-            additions = {
+            self._add_columns(conn, "users", {
                 "first_name": "TEXT NOT NULL DEFAULT ''",
                 "last_name": "TEXT NOT NULL DEFAULT ''",
                 "screen_name": "TEXT NOT NULL DEFAULT ''",
                 "created_at": "TEXT NOT NULL DEFAULT ''",
-            }
-            for name, declaration in additions.items():
-                if name not in columns:
-                    conn.execute(f"ALTER TABLE users ADD COLUMN {name} {declaration}")
+            })
             conn.execute("UPDATE users SET created_at=last_activity WHERE created_at='' OR created_at IS NULL")
         self._execute("""
             CREATE TABLE IF NOT EXISTS leads (
@@ -119,6 +186,11 @@ class Storage:
                 created_at TEXT NOT NULL
             )
         """)
+        with self.lock, self._connect() as conn:
+            self._add_columns(conn, "leads", {
+                "status": "TEXT NOT NULL DEFAULT 'new'",
+                "note": "TEXT NOT NULL DEFAULT ''",
+            })
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.path, timeout=20)
@@ -196,9 +268,22 @@ class Storage:
             )
             conn.execute("UPDATE users SET converted=1 WHERE user_id=?", (user_id,))
 
-    def due_reactivations(self) -> list[dict[str, Any]]:
+    def all_settings(self) -> dict[str, str]:
+        with self.lock, self._connect() as conn:
+            rows = conn.execute("SELECT key,value FROM bot_settings").fetchall()
+        return {row["key"]: row["value"] for row in rows}
+
+    def save_settings(self, values: dict[str, str]) -> None:
+        now = datetime.now(MSK).isoformat()
+        with self.lock, self._connect() as conn:
+            conn.executemany("""
+                INSERT INTO bot_settings(key,value,updated_at) VALUES(?,?,?)
+                ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+            """, [(key, value, now) for key, value in values.items()])
+
+    def due_reactivations(self, hours: tuple[float, ...] = DEFAULT_REACTIVATION_HOURS) -> list[dict[str, Any]]:
         now = datetime.now(MSK)
-        delays = (timedelta(hours=6), timedelta(hours=24), timedelta(days=3))
+        delays = tuple(timedelta(hours=item) for item in hours)
         result = []
         with self.lock, self._connect() as conn:
             rows = conn.execute("SELECT * FROM users WHERE converted=0 AND reactivation_step<3").fetchall()
@@ -238,9 +323,10 @@ WELCOME = """Здравствуйте! Я Наталья Щапова, врач-
 
 
 class Bot:
-    def __init__(self, settings: Settings):
-        self.settings = settings
-        self.storage = Storage(settings.db_path)
+    def __init__(self, settings: Settings | None = None):
+        self.storage = Storage(settings.db_path if settings else os.getenv("DB_PATH", "bot.sqlite3"))
+        # Значения, сохранённые в админ-панели, важнее прочитанных из .env.
+        self.settings = settings = Settings.load(self.storage.all_settings())
         self.session = vk_api.VkApi(token=settings.token)
         self.vk = self.session.get_api()
         self.ensure_longpoll_settings()
@@ -548,15 +634,28 @@ class Bot:
             return True
         return False
 
+    def refresh_settings(self) -> None:
+        """Подхватывает настройки, сохранённые в админ-панели, без перезапуска бота."""
+        overrides = self.storage.all_settings()
+        updated = Settings.load(overrides)
+        if updated == self.settings:
+            return
+        if updated.token != self.settings.token or updated.group_id != self.settings.group_id:
+            LOG.warning("Токен или ID сообщества изменены — перезапустите бота, чтобы применить их")
+        self.settings = updated
+        logging.getLogger().setLevel(config_value("LOG_LEVEL", "INFO", overrides))
+        LOG.info("Настройки обновлены из админ-панели")
+
     def reactivation_loop(self) -> None:
-        messages = (
-            "Наталья Щапова: Возможно, у вас ещё остались сомнения. Задайте вопрос прямо здесь. И помните, что для остеопатии действует промокод на скидку 15% на первый приём.",
-            "Одна из частых историй: человек годами лечит симптом, но облегчение приходит, когда мы находим и мягко убираем первичное натяжение. Если хотите, расскажите, что беспокоит вас — я сориентирую.",
-            f"Приходите на ближайший мастер-класс — познакомимся без обязательств. Актуальные встречи: {self.settings.events_url}",
-        )
         while True:
             try:
-                for row in self.storage.due_reactivations():
+                self.refresh_settings()
+                messages = (
+                    "Наталья Щапова: Возможно, у вас ещё остались сомнения. Задайте вопрос прямо здесь. И помните, что для остеопатии действует промокод на скидку 15% на первый приём.",
+                    "Одна из частых историй: человек годами лечит симптом, но облегчение приходит, когда мы находим и мягко убираем первичное натяжение. Если хотите, расскажите, что беспокоит вас — я сориентирую.",
+                    f"Приходите на ближайший мастер-класс — познакомимся без обязательств. Актуальные встречи: {self.settings.events_url}",
+                )
+                for row in self.storage.due_reactivations(self.settings.reactivation_hours):
                     step = row["reactivation_step"]
                     self.send(row["user_id"], messages[step], keyboard([MENU_ROW]))
                     self.storage.mark_reactivated(row["user_id"], step)
@@ -597,4 +696,4 @@ class Bot:
 
 
 if __name__ == "__main__":
-    Bot(Settings.from_env()).run()
+    Bot().run()

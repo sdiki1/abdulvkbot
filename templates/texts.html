@@ -1,1 +1,20 @@
-{% extends 'base.html' %}{% block title %}Тексты бота{% endblock %}{% block heading %}Тексты бота{% endblock %}{% block content %}<form class="filters" method="get"><input type="search" name="q" value="{{ query }}" placeholder="Найти текст"><button class="button" type="submit">Найти</button></form><div class="text-grid">{% for item in texts %}<a class="text-card" href="{{ url_for('text_edit', text_key=item.text_key) }}"><span class="edit-icon">✎</span><h2>{{ item.title }}</h2><p>{{ item.content }}</p><small>Изменён {{ item.updated_at|dt }}</small></a>{% else %}<p class="empty">Тексты пока не зарегистрированы</p>{% endfor %}</div>{% endblock %}
+{% extends 'base.html' %}
+{% block title %}Тексты бота{% endblock %}
+{% block eyebrow %}Сообщения сценария{% endblock %}
+{% block heading %}Тексты бота{% endblock %}
+{% block content %}
+<form class="filters" method="get">
+  <input type="search" name="q" value="{{ query }}" placeholder="Найти текст">
+  <button class="button" type="submit">Найти</button>
+</form>
+<div class="text-grid">
+  {% for item in texts %}
+  <a class="text-card" href="{{ url_for('text_edit', text_key=item.text_key) }}">
+    <span class="edit-icon">✎</span>
+    <h2>{{ item.title }}</h2>
+    <p>{{ item.content }}</p>
+    <small>Изменён {{ item.updated_at|dt }}</small>
+  </a>
+  {% else %}<p class="empty">Тексты пока не зарегистрированы</p>{% endfor %}
+</div>
+{% endblock %}

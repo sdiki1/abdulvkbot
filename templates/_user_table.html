@@ -1,1 +1,32 @@
-<div class="table-scroll"><table><thead><tr><th>Пользователь</th><th>Ветка</th><th>Сообщений</th><th>Активность</th><th></th></tr></thead><tbody>{% for user in (recent_users if recent_users is defined else users) %}<tr><td><a class="person" href="{{ url_for('user_detail', user_id=user.user_id) }}"><span class="avatar">{{ (user.first_name or 'V')[0] }}</span><span><b>{{ user.first_name or 'VK пользователь' }} {{ user.last_name }}</b><small>id{{ user.user_id }}{% if user.screen_name %} · @{{ user.screen_name }}{% endif %}</small></span></a></td><td><span class="tag">{{ user.topic or 'Главное меню' }}</span></td><td>{{ user.message_count }}</td><td>{{ user.last_activity|dt }}</td><td><a class="arrow" href="{{ url_for('user_detail', user_id=user.user_id) }}">→</a></td></tr>{% else %}<tr><td colspan="5" class="empty">Пользователей пока нет</td></tr>{% endfor %}</tbody></table></div>
+<div class="table-scroll">
+  <table>
+    <thead>
+      <tr><th>Пользователь</th><th>Этап сценария</th><th>Ветка</th><th>Сообщений</th><th>Активность</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for user in (recent_users if recent_users is defined else users) %}
+      <tr>
+        <td>
+          <a class="person" href="{{ url_for('user_detail', user_id=user.user_id) }}">
+            <span class="avatar">{{ (user.first_name or 'V')[0] }}</span>
+            <span>
+              <b>{{ user.first_name or 'VK пользователь' }} {{ user.last_name }}</b>
+              <small>id{{ user.user_id }}{% if user.screen_name %} · @{{ user.screen_name }}{% endif %}</small>
+            </span>
+          </a>
+        </td>
+        <td>
+          <span class="pill {{ 'green' if user.converted else 'blue' }}">{{ user.state|stage }}</span>
+          {% if user.reactivation_step and not user.converted %}<small class="block">напоминаний: {{ user.reactivation_step }}</small>{% endif %}
+        </td>
+        <td><span class="tag">{{ user.topic or 'Главное меню' }}</span></td>
+        <td>{{ user.message_count }}</td>
+        <td>{{ user.last_activity|dt }}</td>
+        <td><a class="arrow" href="{{ url_for('user_detail', user_id=user.user_id) }}">→</a></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="empty">Пользователей пока нет</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>

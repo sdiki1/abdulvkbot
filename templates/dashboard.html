@@ -1,17 +1,80 @@
-{% extends 'base.html' %}{% block title %}Обзор{% endblock %}{% block heading %}Обзор активности{% endblock %}
+{% extends 'base.html' %}
+{% block title %}Обзор{% endblock %}
+{% block eyebrow %}Сводка{% endblock %}
+{% block heading %}Обзор активности{% endblock %}
 {% block content %}
 <section class="stats-grid">
-  <article class="stat"><span>Всего пользователей</span><strong>{{ totals.users }}</strong><small>{{ totals.active_24h }} активных за сутки</small></article>
-  <article class="stat accent"><span>Входящих сообщений</span><strong>{{ totals.incoming }}</strong><small>за всё время</small></article>
-  <article class="stat"><span>Заявок</span><strong>{{ totals.leads }}</strong><small>+{{ totals.leads_week }} за 7 дней</small></article>
-  <article class="stat"><span>Конверсия в заявку</span><strong>{{ conversion }}%</strong><small>от всех пользователей</small></article>
+  <article class="stat">
+    <span>Всего пользователей</span><strong>{{ totals.users }}</strong>
+    <small>{{ totals.active_24h }} активных за сутки</small>
+  </article>
+  <article class="stat accent">
+    <span>Входящих сообщений</span><strong>{{ totals.incoming }}</strong>
+    <small>за всё время</small>
+  </article>
+  <article class="stat">
+    <span>Заявок</span><strong>{{ totals.leads }}</strong>
+    <small>+{{ totals.leads_week }} за 7 дней · {{ totals.leads_new }} необработанных</small>
+  </article>
+  <article class="stat">
+    <span>Конверсия в заявку</span><strong>{{ conversion }}%</strong>
+    <small>от всех пользователей</small>
+  </article>
 </section>
 <section class="dashboard-grid">
-  <article class="panel wide"><div class="panel-head"><div><h2>Активность</h2><p>Входящие сообщения за 14 дней</p></div></div><div class="chart">{% for item in activity %}<div class="bar-wrap" title="{{ item.label }} — {{ item.count }}"><b>{{ item.count if item.count }}</b><div class="bar" style="height:{{ 8 + (item.count / max_activity * 132)|round }}px"></div><small>{{ item.label }}</small></div>{% endfor %}</div></article>
-  <article class="panel"><div class="panel-head"><div><h2>Ветки диалогов</h2><p>Текущее распределение</p></div></div><div class="topics">{% for item in topics %}<div><span>{{ item.topic }}</span><b>{{ item.count }}</b></div>{% else %}<p class="empty">Пока нет данных</p>{% endfor %}</div></article>
+  <article class="panel wide">
+    <div class="panel-head"><div><h2>Активность</h2><p>Входящие сообщения за 14 дней</p></div></div>
+    <div class="chart">
+      {% for item in activity %}
+      <div class="bar-wrap" title="{{ item.label }} — {{ item.count }}">
+        <b>{{ item.count if item.count }}</b>
+        <div class="bar" style="height:{{ 6 + (item.count / max_activity * 128)|round }}px"></div>
+        <small>{{ item.label }}</small>
+      </div>
+      {% endfor %}
+    </div>
+  </article>
+  <article class="panel">
+    <div class="panel-head"><div><h2>Ветки диалогов</h2><p>Текущее распределение</p></div></div>
+    <div class="topics">
+      {% for item in topics %}<div><span>{{ item.topic }}</span><b>{{ item.count }}</b></div>
+      {% else %}<p class="empty">Пока нет данных</p>{% endfor %}
+    </div>
+  </article>
 </section>
-<section class="dashboard-grid lower">
-  <article class="panel wide"><div class="panel-head"><div><h2>Последние пользователи</h2><p>Недавняя активность</p></div><a href="{{ url_for('users') }}">Смотреть всех →</a></div>{% include '_user_table.html' %}</article>
-  <article class="panel"><div class="panel-head"><div><h2>Новые заявки</h2><p>Последние обращения</p></div><a href="{{ url_for('leads') }}">Все →</a></div><div class="lead-list">{% for lead in recent_leads %}<a href="{{ url_for('user_detail', user_id=lead.user_id) }}"><span class="avatar">{{ (lead.first_name or 'V')[0] }}</span><span><b>{{ lead.first_name }} {{ lead.last_name }}</b><small>{{ lead.kind }} · {{ lead.created_at|dt }}</small></span></a>{% else %}<p class="empty">Заявок пока нет</p>{% endfor %}</div></article>
+<section class="dashboard-grid">
+  <article class="panel wide">
+    <div class="panel-head">
+      <div><h2>Этапы сценария</h2><p>Где находятся пользователи прямо сейчас</p></div>
+      <a href="{{ url_for('users') }}">Все пользователи →</a>
+    </div>
+    <div class="funnel">
+      {% for step in funnel %}
+      <a class="funnel-row" href="{{ url_for('users', stage=step.state) }}">
+        <span class="funnel-title">{{ step.title }}</span>
+        <span class="funnel-track"><span class="funnel-fill" style="width:{{ (step.count / max_stage * 100)|round(1) }}%"></span></span>
+        <b>{{ step.count }}</b>
+      </a>
+      {% else %}<p class="empty">Диалогов пока не было</p>{% endfor %}
+    </div>
+  </article>
+  <article class="panel">
+    <div class="panel-head"><div><h2>Новые заявки</h2><p>Последние обращения</p></div><a href="{{ url_for('leads') }}">Все →</a></div>
+    <div class="lead-list">
+      {% for lead in recent_leads %}
+      <a href="{{ url_for('user_detail', user_id=lead.user_id) }}">
+        <span class="avatar">{{ (lead.first_name or 'V')[0] }}</span>
+        <span><b>{{ lead.first_name }} {{ lead.last_name }}</b><small>{{ lead.kind }} · {{ lead.created_at|dt }}</small></span>
+        <span class="pill {{ status_tones.get(lead.status, 'grey') }}">{{ lead_statuses.get(lead.status, lead.status) }}</span>
+      </a>
+      {% else %}<p class="empty">Заявок пока нет</p>{% endfor %}
+    </div>
+  </article>
+</section>
+<section class="dashboard-grid single">
+  <article class="panel">
+    <div class="panel-head"><div><h2>Последние пользователи</h2><p>Недавняя активность</p></div><a href="{{ url_for('users') }}">Смотреть всех →</a></div>
+    {% include '_user_table.html' %}
+  </article>
 </section>
 {% endblock %}

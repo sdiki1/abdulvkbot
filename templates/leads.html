@@ -1,1 +1,61 @@
-{% extends 'base.html' %}{% block title %}Заявки{% endblock %}{% block heading %}Заявки{% endblock %}{% block content %}<article class="panel"><div class="panel-head"><div><h2>Все обращения</h2><p>Всего: {{ leads|length }}</p></div></div><div class="table-scroll"><table><thead><tr><th>Пользователь</th><th>Тип заявки</th><th>Контакт</th><th>Детали</th><th>Дата</th></tr></thead><tbody>{% for lead in leads %}<tr><td><a href="{{ url_for('user_detail', user_id=lead.user_id) }}">{{ lead.first_name or 'VK пользователь' }} {{ lead.last_name }}<small class="block">id{{ lead.user_id }}</small></a></td><td><span class="tag green">{{ lead.kind }}</span></td><td>{{ lead.contact }}</td><td>{{ lead.context|context }}</td><td>{{ lead.created_at|dt }}</td></tr>{% else %}<tr><td colspan="5" class="empty">Заявок пока нет</td></tr>{% endfor %}</tbody></table></div></article>{% endblock %}
+{% extends 'base.html' %}
+{% block title %}Заявки{% endblock %}
+{% block eyebrow %}Обращения{% endblock %}
+{% block heading %}Заявки{% endblock %}
+{% block actions %}
+<a class="button" href="{{ url_for('leads_export', status=status) }}">Выгрузить CSV</a>
+{% endblock %}
+{% block content %}
+<nav class="tabs">
+  <a class="{{ 'active' if status == 'all' }}" href="{{ url_for('leads') }}">Все <b>{{ total }}</b></a>
+  {% for key, title in lead_statuses.items() %}
+  <a class="{{ 'active' if status == key }}" href="{{ url_for('leads', status=key) }}">{{ title }} <b>{{ counts.get(key, 0) }}</b></a>
+  {% endfor %}
+</nav>
+<article class="panel">
+  <div class="panel-head">
+    <div><h2>{{ lead_statuses.get(status, 'Все обращения') }}</h2><p>Показано: {{ leads|length }}</p></div>
+  </div>
+  <div class="table-scroll">
+    <table class="leads-table">
+      <thead>
+        <tr><th>Пользователь</th><th>Тип заявки</th><th>Контакт</th><th>Детали</th><th>Дата</th><th>Обработка</th></tr>
+      </thead>
+      <tbody>
+        {% for lead in leads %}
+        <tr>
+          <td>
+            <a class="person" href="{{ url_for('user_detail', user_id=lead.user_id) }}">
+              <span class="avatar">{{ (lead.first_name or 'V')[0] }}</span>
+              <span>
+                <b>{{ lead.first_name or 'VK пользователь' }} {{ lead.last_name }}</b>
+                <small>id{{ lead.user_id }}{% if lead.screen_name %} · @{{ lead.screen_name }}{% endif %}</small>
+              </span>
+            </a>
+          </td>
+          <td><span class="tag green">{{ lead.kind }}</span></td>
+          <td class="contact">{{ lead.contact }}</td>
+          <td class="details">{{ lead.context|context }}</td>
+          <td>{{ lead.created_at|dt }}</td>
+          <td>
+            <form class="status-form" method="post" action="{{ url_for('lead_update', lead_id=lead.id) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="back" value="{{ request.full_path }}">
+              <select name="status" class="status-select {{ status_tones.get(lead.status, 'grey') }}">
+                {% for key, title in lead_statuses.items() %}
+                <option value="{{ key }}" {{ 'selected' if lead.status == key }}>{{ title }}</option>
+                {% endfor %}
+              </select>
+              <input name="note" value="{{ lead.note }}" placeholder="Заметка" maxlength="500">
+              <button class="button small" type="submit">Сохранить</button>
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="empty">Заявок пока нет</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</article>
+{% endblock %}

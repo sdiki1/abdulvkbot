@@ -3,27 +3,62 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
   <title>{% block title %}Управление ботом{% endblock %} · Наталья Щапова</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='admin.css') }}">
 </head>
 <body>
-  <aside class="sidebar">
-    <a class="brand" href="{{ url_for('dashboard') }}"><span class="brand-mark">NS</span><span>Панель бота<small>Наталья Щапова</small></span></a>
-    <nav>
-      <a class="{{ 'active' if request.endpoint == 'dashboard' }}" href="{{ url_for('dashboard') }}"><span>⌂</span> Обзор</a>
-      <a class="{{ 'active' if request.endpoint in ('users','user_detail') }}" href="{{ url_for('users') }}"><span>◉</span> Пользователи</a>
-      <a class="{{ 'active' if request.endpoint == 'leads' }}" href="{{ url_for('leads') }}"><span>◇</span> Заявки</a>
-      <a class="{{ 'active' if request.endpoint in ('texts','text_edit') }}" href="{{ url_for('texts') }}"><span>✎</span> Тексты бота</a>
-    </nav>
-    <form method="post" action="{{ url_for('logout') }}" class="logout">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <button type="submit">Выйти</button>
-    </form>
-  </aside>
-  <main class="main">
-    <header class="topbar"><div><span class="eyebrow">VK LONG POLL</span><h1>{% block heading %}Панель управления{% endblock %}</h1></div><span class="online"><i></i> Система активна</span></header>
-    {% with items = get_flashed_messages(with_categories=true) %}{% if items %}<div class="flashes">{% for category, message in items %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}</div>{% endif %}{% endwith %}
-    {% block content %}{% endblock %}
-  </main>
+<a class="skip" href="#content">К содержимому</a>
+<aside class="sidebar">
+  <a class="brand" href="{{ url_for('dashboard') }}">
+    <span class="brand-mark">NS</span>
+    <span class="brand-name">Панель бота<small>Наталья Щапова</small></span>
+  </a>
+  <nav>
+    <a class="{{ 'active' if request.endpoint == 'dashboard' }}" href="{{ url_for('dashboard') }}">
+      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 8.5 10 3l7 5.5V16a1 1 0 0 1-1 1h-3.5v-4.5h-5V17H4a1 1 0 0 1-1-1Z"/></svg>
+      Обзор
+    </a>
+    <a class="{{ 'active' if request.endpoint in ('users','user_detail') }}" href="{{ url_for('users') }}">
+      <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8" cy="7" r="3"/><path d="M2.5 17c0-3 2.5-4.6 5.5-4.6s5.5 1.6 5.5 4.6"/><path d="M14 4.4a3 3 0 0 1 0 5.2M15.4 12.6c1.4.6 2.6 1.8 2.6 4.4"/></svg>
+      Пользователи
+    </a>
+    <a class="{{ 'active' if request.endpoint == 'leads' }}" href="{{ url_for('leads') }}">
+      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2.5 10.5h4l1.2 2.2h4.6l1.2-2.2h4"/><path d="M4.3 4h11.4l1.8 6.5V16a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1v-5.5Z"/></svg>
+      Заявки
+    </a>
+    <a class="{{ 'active' if request.endpoint in ('texts','text_edit') }}" href="{{ url_for('texts') }}">
+      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m12.6 3.9 3.5 3.5L7.5 16H4v-3.5Z"/><path d="M11 5.5 14.5 9"/></svg>
+      Тексты бота
+    </a>
+    <a class="{{ 'active' if request.endpoint == 'settings_page' }}" href="{{ url_for('settings_page') }}">
+      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 6h14M3 14h14"/><circle cx="8" cy="6" r="2.2"/><circle cx="13" cy="14" r="2.2"/></svg>
+      Настройки
+    </a>
+  </nav>
+  <form method="post" action="{{ url_for('logout') }}" class="logout">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button type="submit">
+      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M8 17H4.5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1H8"/><path d="M12.5 13.5 16 10l-3.5-3.5M16 10H7.5"/></svg>
+      Выйти
+    </button>
+  </form>
+</aside>
+<main class="main" id="content">
+  <header class="topbar">
+    <div>
+      <span class="eyebrow">{% block eyebrow %}VK Long Poll{% endblock %}</span>
+      <h1>{% block heading %}Панель управления{% endblock %}</h1>
+    </div>
+    <div class="topbar-actions">
+      {% block actions %}{% endblock %}
+      <span class="online"><i></i> Система активна</span>
+    </div>
+  </header>
+  {% with items = get_flashed_messages(with_categories=true) %}
+    {% if items %}<div class="flashes">{% for category, message in items %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}</div>{% endif %}
+  {% endwith %}
+  {% block content %}{% endblock %}
+</main>
 </body>
 </html>

@@ -1,5 +1,27 @@
 <!doctype html>
-<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Вход · Панель бота</title><link rel="stylesheet" href="{{ url_for('static', filename='admin.css') }}"></head>
-<body class="login-page"><section class="login-card"><div class="login-brand">NS</div><p class="eyebrow">АДМИН-ПАНЕЛЬ</p><h1>Добро пожаловать</h1><p class="muted">Управление ботом Натальи Щаповой</p>
-{% with items = get_flashed_messages(with_categories=true) %}{% for category, message in items %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}{% endwith %}
-<form method="post" action="{{ url_for('login_post', next=request.args.get('next','')) }}" class="stack"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><label>Логин<input name="login" autocomplete="username" required autofocus></label><label>Пароль<input type="password" name="password" autocomplete="current-password" required></label><button class="button primary" type="submit">Войти в панель</button></form></section></body></html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Вход · Панель бота</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='admin.css') }}">
+</head>
+<body class="login-page">
+<section class="login-card">
+  <div class="login-brand">NS</div>
+  <p class="eyebrow">Админ-панель</p>
+  <h1>Добро пожаловать</h1>
+  <p class="muted">Управление ботом Натальи Щаповой</p>
+  {% with items = get_flashed_messages(with_categories=true) %}
+    {% for category, message in items %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}
+  {% endwith %}
+  <form method="post" action="{{ url_for('login_post', next=request.args.get('next','')) }}" class="stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>Логин<input name="login" autocomplete="username" required autofocus></label>
+    <label>Пароль<input type="password" name="password" autocomplete="current-password" required></label>
+    <button class="button primary" type="submit">Войти в панель</button>
+  </form>
+</section>
+</body>
+</html>
