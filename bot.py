@@ -353,15 +353,12 @@ class Bot:
 ✅ Регулярные созвоны (раз в 1–2 недели) для контроля.
 ✅ Финальный чек-ап и оценка результата.
 
-Таких мест всегда немного, и стоимость рассчитывается персонально. Если вы готовы к системным изменениям, отправьте имя и телефон одним сообщением или поделитесь номером кнопкой ниже.""", self.contact_keyboard())
+Таких мест всегда немного, и стоимость рассчитывается персонально. Если вы готовы к системным изменениям, отправьте имя и телефон одним сообщением.""", self.contact_keyboard())
 
     def contact_keyboard(self) -> VkKeyboard:
-        kb = VkKeyboard(one_time=False)
-        kb.add_button("📱 Поделиться номером", VkKeyboardColor.POSITIVE, request_contact=True,
-                      payload={"cmd": "contact"})
-        kb.add_line()
-        kb.add_button("🏠 Вернуться в начало", VkKeyboardColor.SECONDARY, payload={"cmd": "menu"})
-        return kb
+        # VK text keyboards cannot request a user's phone number. Keep the
+        # navigation button here and collect the contact from the message body.
+        return keyboard([MENU_ROW])
 
     def events(self, uid: int) -> None:
         self.set_state(uid, "events", topic="events")
