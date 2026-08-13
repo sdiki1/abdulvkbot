@@ -5,8 +5,15 @@
 {% block content %}
 <form class="filters" method="get">
   <input type="search" name="q" value="{{ query }}" placeholder="Найти текст">
+  {% if stale %}<input type="hidden" name="stale" value="1">{% endif %}
   <button class="button" type="submit">Найти</button>
+  {% if stale %}
+  <a class="button" href="{{ url_for('texts') }}">← К текущим текстам</a>
+  {% elif stale_count %}
+  <a class="button" href="{{ url_for('texts', stale=1) }}">Тексты прошлых версий ({{ stale_count }})</a>
+  {% endif %}
 </form>
+{% if stale %}<p class="page-intro">Эти сообщения больше не встречаются в сценарии бота: он их не отправляет. Правки здесь ни на что не влияют — раздел нужен, чтобы при желании перенести формулировки в актуальные тексты.</p>{% endif %}
 <div class="text-grid">
   {% for item in texts %}
   <a class="text-card" href="{{ url_for('text_edit', text_key=item.text_key) }}">

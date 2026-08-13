@@ -50,7 +50,14 @@ CONFIG_GROUPS: tuple[tuple[str, str, tuple[ConfigField, ...]], ...] = (
                     kind="int", required=True, restart="бота"),
     )),
     ("Ссылки в сообщениях", "Бот подставляет их в ответы — обновляются в течение минуты.", (
-        ConfigField("DIKIDI_URL", "Ссылка на запись", "Отправляется после выбора города",
+        ConfigField("DIKIDI_MOSCOW_URL", "Запись в Москве",
+                    "Ссылка Dikidi, которую бот отправляет выбравшим Москву",
+                    kind="url", default="https://dikidi.net/1668131"),
+        ConfigField("DIKIDI_ZVENIGOROD_URL", "Запись в Звенигороде",
+                    "Ссылка Dikidi для Звенигорода",
+                    kind="url", default="https://dikidi.net/1751954"),
+        ConfigField("DIKIDI_URL", "Запасная ссылка на запись",
+                    "Используется, если ссылка для города не заполнена",
                     kind="url", default="https://dikidi.net/"),
         ConfigField("EVENTS_URL", "Ссылка на мероприятия", "Ближайшие встречи и мастер-классы",
                     kind="url", default="https://dikidi.net/"),
@@ -185,8 +192,10 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     app.config.update(DB_PATH=forced.get("DB_PATH", os.getenv("DB_PATH", "bot.sqlite3")))
 
     storage = Storage(app.config["DB_PATH"])
-    for text in discover_bot_texts():
+    bot_texts = discover_bot_texts()
+    for text in bot_texts:
         storage.resolve_text(text)
+    storage.mark_active_texts(bot_texts)
 
     def config_state() -> dict[str, dict[str, str]]:
         """Текущее значение каждой настройки и то, откуда оно взято."""
@@ -518,15 +527,21 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     @login_required
     def texts() -> Any:
         query = request.args.get("q", "").strip()
+        # Тексты прошлых версий сценария остаются в базе, но по умолчанию скрыты.
+        stale = request.args.get("stale") == "1"
+        where = ["is_active=?"]
+        params: list[Any] = [0 if stale else 1]
+        if query:
+            where.append("(title LIKE ? OR content LIKE ?)")
+            params.extend([f"%{query}%", f"%{query}%"])
         with db() as conn:
-            if query:
-                rows = conn.execute(
-                    "SELECT * FROM bot_texts WHERE title LIKE ? OR content LIKE ? ORDER BY title",
-                    (f"%{query}%", f"%{query}%"),
-                ).fetchall()
-            else:
-                rows = conn.execute("SELECT * FROM bot_texts ORDER BY title").fetchall()
-        return render_template("texts.html", texts=rows, query=query)
+            rows = conn.execute(
+                f"SELECT * FROM bot_texts WHERE {' AND '.join(where)} ORDER BY title", params
+            ).fetchall()
+            stale_count = conn.execute(
+                "SELECT COUNT(*) count FROM bot_texts WHERE is_active=0"
+            ).fetchone()["count"]
+        return render_template("texts.html", texts=rows, query=query, stale=stale, stale_count=stale_count)
 
     @app.get("/texts/<text_key>")
     @login_required
@@ -583,6 +598,8 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
             # Пустое секретное поле означает «оставить прежнее значение».
             if item.kind == "secret" and not submitted:
                 submitted = state[key]["value"]
+            if item.kind in ("ids", "hours"):
+                submitted = submitted.replace(" ", "").strip(",")
             error = validate_field(item, submitted)
             if error:
                 errors.append(error)
@@ -606,7 +623,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
             flash(warning, "error")
         restarts = sorted({CONFIG_FIELDS[key].restart for key in changed if CONFIG_FIELDS[key].restart})
         if restarts:
-            flash(f"Чтобы применить изменения, перезапустите: {', '.join(restarts)}", "error")
+            flash(f"Чтобы применить изменения, перезапустите: {', '.join(restarts)}", "note")
         return redirect(url_for("settings_page"))
 
     @app.post("/settings/check")

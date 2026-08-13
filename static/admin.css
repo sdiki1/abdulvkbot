@@ -512,6 +512,7 @@ select {
   font-weight: 600;
 }
 .flash.error { background: var(--danger-soft); color: var(--danger); }
+.flash.note { background: var(--amber-soft); color: var(--amber); }
 
 .back { display: inline-block; margin-bottom: 14px; text-decoration: none; font-weight: 700; }
 .back:hover { text-decoration: underline; }
