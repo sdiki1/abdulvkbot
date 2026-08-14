@@ -18,10 +18,11 @@ from typing import Any, Callable
 import vk_api
 from dotenv import load_dotenv
 from flask import (Flask, Response, abort, flash, redirect, render_template, request,
-                   session, url_for)
+                   send_from_directory, session, url_for)
 from waitress import serve
 
-from bot import LEAD_STATUSES, MSK, STATE_TITLES, Storage, state_title
+from bot import (LEAD_STATUSES, MSK, STATE_TITLES, Storage, format_event_datetime,
+                 state_title)
 
 
 load_dotenv()
@@ -96,6 +97,24 @@ CONFIG_FIELDS: dict[str, ConfigField] = {
     item.key: item for _, _, fields in CONFIG_GROUPS for item in fields
 }
 STATUS_TONES = {"new": "blue", "in_work": "amber", "booked": "green", "rejected": "grey"}
+MAX_UPLOAD_BYTES = 8 * 1024 * 1024
+# Расширение доверять нельзя, поэтому проверяем сигнатуру файла.
+IMAGE_SIGNATURES = (
+    (b"\xff\xd8\xff", ".jpg"),
+    (b"\x89PNG\r\n\x1a\n", ".png"),
+    (b"GIF87a", ".gif"),
+    (b"GIF89a", ".gif"),
+)
+
+
+def detect_image(data: bytes) -> str:
+    """Возвращает расширение картинки или пустую строку, если это не изображение."""
+    for signature, extension in IMAGE_SIGNATURES:
+        if data.startswith(signature):
+            return extension
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return ".webp"
+    return ""
 
 
 def discover_bot_texts() -> list[str]:
@@ -189,7 +208,10 @@ def write_env_file(values: dict[str, str]) -> str:
 def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     app = Flask(__name__)
     forced = dict(test_config or {})
-    app.config.update(DB_PATH=forced.get("DB_PATH", os.getenv("DB_PATH", "bot.sqlite3")))
+    app.config.update(
+        DB_PATH=forced.get("DB_PATH", os.getenv("DB_PATH", "bot.sqlite3")),
+        MAX_CONTENT_LENGTH=MAX_UPLOAD_BYTES + 512 * 1024,
+    )
 
     storage = Storage(app.config["DB_PATH"])
     bot_texts = discover_bot_texts()
@@ -289,6 +311,18 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     @app.template_filter("stage")
     def format_stage(value: str | None) -> str:
         return state_title(value or "")
+
+    @app.template_filter("event_dt")
+    def format_event_date(value: str | None) -> str:
+        return format_event_datetime(value) if value else "—"
+
+    @app.template_filter("dt_input")
+    def format_datetime_input(value: str | None) -> str:
+        """Значение для <input type="datetime-local">."""
+        try:
+            return datetime.fromisoformat(value or "").astimezone(MSK).strftime("%Y-%m-%dT%H:%M")
+        except ValueError:
+            return ""
 
     @app.before_request
     def protect_post() -> None:
@@ -482,8 +516,10 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
         params = [status] if condition else []
         with db() as conn:
             rows = conn.execute(f"""
-                SELECT l.*, u.first_name, u.last_name, u.screen_name FROM leads l
-                LEFT JOIN users u ON u.user_id=l.user_id {condition}
+                SELECT l.*, u.first_name, u.last_name, u.screen_name, e.title event_title
+                FROM leads l
+                LEFT JOIN users u ON u.user_id=l.user_id
+                LEFT JOIN events e ON e.id=l.event_id {condition}
                 ORDER BY l.created_at DESC
             """, params).fetchall()
         return rows, (status if condition else "all")
@@ -522,6 +558,176 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
             abort(404)
         flash("Заявка обновлена", "success")
         return safe_redirect(request.form.get("back", ""), url_for("leads"))
+
+    def save_event_photo(files: Any) -> tuple[str, str]:
+        """Сохраняет загруженную картинку рядом с базой. Возвращает имя файла и ошибку."""
+        upload = files.get("photo")
+        if not upload or not upload.filename:
+            return "", ""
+        data = upload.read(MAX_UPLOAD_BYTES + 1)
+        if len(data) > MAX_UPLOAD_BYTES:
+            return "", "Картинка больше 8 МБ — уменьшите файл"
+        extension = detect_image(data)
+        if not extension:
+            return "", "Файл не похож на картинку: подойдут JPG, PNG, GIF или WebP"
+        name = f"event-{datetime.now(MSK):%Y%m%d%H%M%S}-{secrets.token_hex(4)}{extension}"
+        (storage.uploads_dir() / name).write_bytes(data)
+        return name, ""
+
+    def drop_event_photo(name: str) -> None:
+        if not name:
+            return
+        try:
+            (storage.uploads_dir() / name).unlink(missing_ok=True)
+        except OSError:
+            app.logger.warning("Не удалось удалить картинку %s", name)
+
+    def event_form(form: Any) -> tuple[dict[str, Any], list[str]]:
+        """Разбирает форму мероприятия, возвращает значения и список ошибок."""
+        values = {
+            "title": form.get("title", "").strip()[:200],
+            "starts_at": form.get("starts_at", "").strip(),
+            "city": form.get("city", "").strip()[:100],
+            "address": form.get("address", "").strip()[:300],
+            "price": form.get("price", "").strip()[:100],
+            "description": form.get("description", "").strip(),
+            "registration_url": form.get("registration_url", "").strip(),
+            "is_published": 1 if form.get("is_published") == "1" else 0,
+        }
+        errors = []
+        if not values["title"]:
+            errors.append("Укажите название встречи")
+        try:
+            # Браузер присылает «2026-08-27T12:00» — дополняем московским часовым поясом.
+            moment = datetime.fromisoformat(values["starts_at"])
+            values["starts_at"] = moment.replace(tzinfo=moment.tzinfo or MSK).isoformat()
+        except ValueError:
+            errors.append("Укажите дату и время встречи")
+        if values["registration_url"] and not re.match(r"^https?://\S+$", values["registration_url"]):
+            errors.append("Ссылка на регистрацию должна начинаться с http:// или https://")
+        return values, errors
+
+    @app.get("/events")
+    @login_required
+    def events() -> Any:
+        with db() as conn:
+            rows = conn.execute("""
+                SELECT e.*, (SELECT COUNT(*) FROM leads l WHERE l.event_id=e.id) signups
+                FROM events e ORDER BY e.starts_at DESC
+            """).fetchall()
+        now = datetime.now(MSK).isoformat()
+        upcoming = [row for row in rows if row["starts_at"] >= now]
+        past = [row for row in rows if row["starts_at"] < now]
+        return render_template("events.html", upcoming=upcoming, past=past)
+
+    @app.get("/events/new")
+    @login_required
+    def event_new() -> Any:
+        return render_template("event_edit.html", event=None, signups=[])
+
+    @app.post("/events/new")
+    @login_required
+    def event_create() -> Any:
+        values, errors = event_form(request.form)
+        photo, photo_error = save_event_photo(request.files)
+        if photo_error:
+            errors.append(photo_error)
+        if errors:
+            drop_event_photo(photo)
+            for message in errors:
+                flash(message, "error")
+            return render_template("event_edit.html", event=values, signups=[]), 400
+        values["photo"] = photo
+        with db() as conn:
+            cursor = conn.execute("""
+                INSERT INTO events(title,starts_at,city,address,price,description,
+                                   registration_url,is_published,created_at,photo)
+                VALUES(:title,:starts_at,:city,:address,:price,:description,
+                       :registration_url,:is_published,:created_at,:photo)
+            """, {**values, "created_at": datetime.now(MSK).isoformat()})
+        flash("Мероприятие создано" + ("" if values["is_published"] else " как черновик"), "success")
+        return redirect(url_for("event_edit", event_id=cursor.lastrowid))
+
+    @app.get("/events/<int:event_id>")
+    @login_required
+    def event_edit(event_id: int) -> Any:
+        with db() as conn:
+            event = conn.execute("SELECT * FROM events WHERE id=?", (event_id,)).fetchone()
+            if event is None:
+                abort(404)
+            signups = conn.execute("""
+                SELECT l.*, u.first_name, u.last_name, u.screen_name FROM leads l
+                LEFT JOIN users u ON u.user_id=l.user_id
+                WHERE l.event_id=? ORDER BY l.created_at DESC
+            """, (event_id,)).fetchall()
+        return render_template("event_edit.html", event=event, signups=signups)
+
+    @app.post("/events/<int:event_id>")
+    @login_required
+    def event_update(event_id: int) -> Any:
+        with db() as conn:
+            current = conn.execute("SELECT photo FROM events WHERE id=?", (event_id,)).fetchone()
+        if current is None:
+            abort(404)
+        values, errors = event_form(request.form)
+        photo, photo_error = save_event_photo(request.files)
+        if photo_error:
+            errors.append(photo_error)
+        if errors:
+            drop_event_photo(photo)
+            for message in errors:
+                flash(message, "error")
+            return redirect(url_for("event_edit", event_id=event_id))
+
+        remove = request.form.get("remove_photo") == "1"
+        values["photo"] = "" if remove else (photo or current["photo"])
+        if photo or remove:
+            drop_event_photo(current["photo"])
+        with db() as conn:
+            cursor = conn.execute("""
+                UPDATE events SET title=:title, starts_at=:starts_at, city=:city, address=:address,
+                    price=:price, description=:description, registration_url=:registration_url,
+                    is_published=:is_published, photo=:photo,
+                    -- Новая картинка требует повторной загрузки в ВК.
+                    photo_attachment=CASE WHEN photo=:photo THEN photo_attachment ELSE '' END
+                WHERE id=:id
+            """, {**values, "id": event_id})
+        if not cursor.rowcount:
+            abort(404)
+        flash("Мероприятие сохранено — бот показывает новую версию сразу", "success")
+        return redirect(url_for("event_edit", event_id=event_id))
+
+    @app.post("/events/<int:event_id>/publish")
+    @login_required
+    def event_publish(event_id: int) -> Any:
+        published = 1 if request.form.get("is_published") == "1" else 0
+        with db() as conn:
+            cursor = conn.execute("UPDATE events SET is_published=? WHERE id=?", (published, event_id))
+        if not cursor.rowcount:
+            abort(404)
+        flash("Мероприятие опубликовано" if published else "Мероприятие скрыто от бота", "success")
+        return safe_redirect(request.form.get("back", ""), url_for("events"))
+
+    @app.get("/uploads/<name>")
+    @login_required
+    def uploaded_file(name: str) -> Any:
+        if not re.fullmatch(r"event-[0-9a-z-]+\.(jpg|png|gif|webp)", name):
+            abort(404)
+        return send_from_directory(storage.uploads_dir(), name)
+
+    @app.post("/events/<int:event_id>/delete")
+    @login_required
+    def event_delete(event_id: int) -> Any:
+        with db() as conn:
+            row = conn.execute("SELECT photo FROM events WHERE id=?", (event_id,)).fetchone()
+            # Заявки сохраняем: у них просто пропадает привязка к удалённой встрече.
+            conn.execute("UPDATE leads SET event_id=NULL WHERE event_id=?", (event_id,))
+            cursor = conn.execute("DELETE FROM events WHERE id=?", (event_id,))
+        if not cursor.rowcount:
+            abort(404)
+        drop_event_photo(row["photo"])
+        flash("Мероприятие удалено, заявки остались в списке", "success")
+        return redirect(url_for("events"))
 
     @app.get("/texts")
     @login_required

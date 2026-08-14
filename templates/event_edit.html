@@ -1,0 +1,100 @@
+{% extends 'base.html' %}
+{% block title %}{{ event.title if event else 'Новое мероприятие' }}{% endblock %}
+{% block eyebrow %}Живые встречи{% endblock %}
+{% block heading %}{{ 'Мероприятие' if event else 'Новое мероприятие' }}{% endblock %}
+{% block content %}
+<a class="back" href="{{ url_for('events') }}">← Ко всем мероприятиям</a>
+<div class="detail-grid reverse">
+  <article class="panel editor">
+    <div class="panel-head">
+      <div>
+        <h2>{{ event.title if event else 'Анонс встречи' }}</h2>
+        <p>Так, как его увидит человек в переписке с ботом</p>
+      </div>
+    </div>
+    <form method="post" class="stack" enctype="multipart/form-data"
+          action="{{ url_for('event_update', event_id=event.id) if event and event.id else url_for('event_create') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="field-grid">
+        <label class="field wide">
+          <span class="field-label">Название</span>
+          <input name="title" value="{{ event.title if event else '' }}" required
+                 placeholder="Головные боли и шея: как помочь себе без таблеток">
+          <span class="field-hint">Попадает в подпись кнопки, поэтому лучше до 30 символов</span>
+        </label>
+        <label class="field">
+          <span class="field-label">Дата и время</span>
+          <input type="datetime-local" name="starts_at" required
+                 value="{{ event.starts_at|dt_input if event else '' }}">
+          <span class="field-hint">Московское время. После этого момента встреча уходит в «прошедшие»</span>
+        </label>
+        <label class="field">
+          <span class="field-label">Стоимость</span>
+          <input name="price" value="{{ event.price if event else '' }}" placeholder="Бесплатно, нужна регистрация">
+        </label>
+        <label class="field">
+          <span class="field-label">Город</span>
+          <input name="city" value="{{ event.city if event else '' }}" placeholder="Москва">
+        </label>
+        <label class="field">
+          <span class="field-label">Адрес</span>
+          <input name="address" value="{{ event.address if event else '' }}"
+                 placeholder="проспект Мира, 95, коворкинг Freedom, 5 этаж">
+        </label>
+        <label class="field wide">
+          <span class="field-label">Описание</span>
+          <textarea name="description" rows="6"
+                    placeholder="Покажу упражнения, расскажу о скрытых причинах, проведу короткую диагностику желающим.">{{ event.description if event else '' }}</textarea>
+        </label>
+        <label class="field wide">
+          <span class="field-label">Ссылка на регистрацию <span class="chip live">необязательно</span></span>
+          <input name="registration_url" value="{{ event.registration_url if event else '' }}"
+                 placeholder="https://dikidi.net/...">
+          <span class="field-hint">Если указана, бот добавит её в анонс. Имя и телефон он собирает в любом случае</span>
+        </label>
+        <div class="field wide">
+          <span class="field-label">Фото мероприятия <span class="chip live">необязательно</span></span>
+          {% if event and event.photo %}
+          <div class="photo-row">
+            <img class="photo-preview" src="{{ url_for('uploaded_file', name=event.photo) }}" alt="Фото мероприятия">
+            <label class="photo-remove">
+              <input type="checkbox" name="remove_photo" value="1">
+              <span>Удалить текущее фото</span>
+            </label>
+          </div>
+          {% endif %}
+          <input type="file" name="photo" accept="image/jpeg,image/png,image/gif,image/webp">
+          <span class="field-hint">Бот отправит картинку вместе с анонсом. JPG, PNG, GIF или WebP до 8 МБ{% if event and event.photo %}; новый файл заменит текущий{% endif %}</span>
+        </div>
+        <label class="field wide check">
+          <input type="checkbox" name="is_published" value="1"
+                 {{ 'checked' if not event or event.is_published }}>
+          <span><b>Показывать в боте</b><small>Снимите галочку, чтобы подготовить анонс заранее</small></span>
+        </label>
+      </div>
+      <div class="actions"><button class="button primary" type="submit">Сохранить мероприятие</button></div>
+    </form>
+    {% if event and event.id %}
+    <form method="post" action="{{ url_for('event_delete', event_id=event.id) }}"
+          onsubmit="return confirm('Удалить мероприятие? Заявки останутся в списке заявок.')">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="button danger" type="submit">Удалить мероприятие</button>
+    </form>
+    {% endif %}
+  </article>
+  <aside class="panel">
+    <div class="panel-head"><div><h2>Записались</h2><p>Всего: {{ signups|length }}</p></div></div>
+    {% for lead in signups %}
+    <div class="lead-card">
+      <b>{{ lead.first_name or 'VK пользователь' }} {{ lead.last_name }}</b>
+      <span>{{ lead.contact }}</span>
+      <span class="pill {{ status_tones.get(lead.status, 'grey') }}">{{ lead_statuses.get(lead.status, lead.status) }}</span>
+      <a href="{{ url_for('user_detail', user_id=lead.user_id) }}">Открыть переписку →</a>
+      <small>{{ lead.created_at|dt }}</small>
+    </div>
+    {% else %}
+    <p class="empty">Пока никто не записался</p>
+    {% endfor %}
+  </aside>
+</div>
+{% endblock %}

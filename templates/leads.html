@@ -33,7 +33,12 @@
               </span>
             </a>
           </td>
-          <td><span class="tag green">{{ lead.kind }}</span></td>
+          <td>
+            <span class="tag green">{{ lead.kind }}</span>
+            {% if lead.event_id and lead.event_title %}
+            <a class="block" href="{{ url_for('event_edit', event_id=lead.event_id) }}">Карточка встречи →</a>
+            {% endif %}
+          </td>
           <td class="contact">{{ lead.contact }}</td>
           <td class="details">{{ lead.context|context }}</td>
           <td>{{ lead.created_at|dt }}</td>

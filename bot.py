@@ -15,6 +15,7 @@ from typing import Any
 
 import vk_api
 from dotenv import load_dotenv
+from pathlib import Path
 from vk_api.bot_longpoll import VkBotEventType, VkBotLongPoll
 from vk_api.keyboard import VkKeyboard, VkKeyboardColor
 
@@ -43,6 +44,8 @@ STATE_TITLES = {
     "booking_confirm": "Ожидает подтверждения записи",
     "aroma_format": "Формат ароматестирования",
     "events": "Мероприятия",
+    "events_list": "Выбор встречи",
+    "event_signup": "Смотрит анонс встречи",
     "lead_contact": "Ожидание контактов",
     "done": "Заявка оставлена",
 }
@@ -168,8 +171,28 @@ class Storage:
                 updated_at TEXT NOT NULL
             )
         """)
+        self._execute("""
+            CREATE TABLE IF NOT EXISTS events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                starts_at TEXT NOT NULL,
+                city TEXT NOT NULL DEFAULT '',
+                address TEXT NOT NULL DEFAULT '',
+                price TEXT NOT NULL DEFAULT '',
+                description TEXT NOT NULL DEFAULT '',
+                registration_url TEXT NOT NULL DEFAULT '',
+                is_published INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL
+            )
+        """)
         with self.lock, self._connect() as conn:
             self._add_columns(conn, "bot_texts", {"is_active": "INTEGER NOT NULL DEFAULT 1"})
+            self._add_columns(conn, "leads", {"event_id": "INTEGER"})
+            self._add_columns(conn, "events", {
+                "photo": "TEXT NOT NULL DEFAULT ''",
+                # Идентификатор загруженной в ВК картинки: получаем один раз и переиспользуем.
+                "photo_attachment": "TEXT NOT NULL DEFAULT ''",
+            })
 
     @staticmethod
     def _add_columns(conn: sqlite3.Connection, table: str, additions: dict[str, str]) -> None:
@@ -271,13 +294,38 @@ class Storage:
             row = conn.execute("SELECT content FROM bot_texts WHERE text_key=?", (text_key,)).fetchone()
         return row["content"] if row else default
 
-    def add_lead(self, user_id: int, kind: str, contact: str, context: dict[str, Any]) -> None:
+    def add_lead(self, user_id: int, kind: str, contact: str, context: dict[str, Any],
+                 event_id: int | None = None) -> None:
         with self.lock, self._connect() as conn:
             conn.execute(
-                "INSERT INTO leads(user_id,kind,contact,context,created_at) VALUES(?,?,?,?,?)",
-                (user_id, kind, contact, json.dumps(context, ensure_ascii=False), datetime.now(MSK).isoformat()),
+                "INSERT INTO leads(user_id,kind,contact,context,created_at,event_id) VALUES(?,?,?,?,?,?)",
+                (user_id, kind, contact, json.dumps(context, ensure_ascii=False),
+                 datetime.now(MSK).isoformat(), event_id),
             )
             conn.execute("UPDATE users SET converted=1 WHERE user_id=?", (user_id,))
+
+    def upcoming_events(self, limit: int = 8) -> list[dict[str, Any]]:
+        """Опубликованные встречи, которые ещё не прошли."""
+        with self.lock, self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM events WHERE is_published=1 AND starts_at>=? ORDER BY starts_at LIMIT ?",
+                (datetime.now(MSK).isoformat(), limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_event(self, event_id: int) -> dict[str, Any] | None:
+        with self.lock, self._connect() as conn:
+            row = conn.execute("SELECT * FROM events WHERE id=?", (event_id,)).fetchone()
+        return dict(row) if row else None
+
+    def set_event_attachment(self, event_id: int, attachment: str) -> None:
+        self._execute("UPDATE events SET photo_attachment=? WHERE id=?", (attachment, event_id))
+
+    def uploads_dir(self) -> Path:
+        """Картинки лежат рядом с базой — так их видят и бот, и панель в разных контейнерах."""
+        directory = Path(self.path).resolve().parent / "uploads"
+        directory.mkdir(parents=True, exist_ok=True)
+        return directory
 
     def mark_active_texts(self, defaults: list[str]) -> None:
         """После правки сценария часть текстов исчезает из кода — прячем их из панели."""
@@ -316,13 +364,57 @@ class Storage:
         self._execute("UPDATE users SET reactivation_step=? WHERE user_id=?", (step + 1, user_id))
 
 
-def keyboard(rows: list[list[tuple[str, str]]], inline: bool = False) -> VkKeyboard:
+MONTHS = ("января", "февраля", "марта", "апреля", "мая", "июня",
+          "июля", "августа", "сентября", "октября", "ноября", "декабря")
+WEEKDAYS = ("понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье")
+
+
+def format_event_datetime(value: str) -> str:
+    """«27 июля, суббота, 12:00» — как в анонсах сценария."""
+    try:
+        moment = datetime.fromisoformat(value).astimezone(MSK)
+    except ValueError:
+        return value
+    return f"{moment.day} {MONTHS[moment.month - 1]}, {WEEKDAYS[moment.weekday()]}, {moment:%H:%M}"
+
+
+def event_button_label(event: dict[str, Any]) -> str:
+    """Подпись кнопки: ВК обрезает всё длиннее 40 символов."""
+    try:
+        moment = datetime.fromisoformat(event["starts_at"]).astimezone(MSK)
+        prefix = f"{moment:%d.%m} "
+    except ValueError:
+        prefix = ""
+    title = event["title"]
+    room = 40 - len(prefix)
+    return prefix + (title if len(title) <= room else title[:room - 1].rstrip() + "…")
+
+
+def format_event(event: dict[str, Any], full: bool = False) -> str:
+    lines = [f"🗓 {format_event_datetime(event['starts_at'])}", f"🧠 {event['title']}"]
+    place = ", ".join(part for part in (event["city"], event["address"]) if part)
+    if place:
+        lines.insert(1, f"📍 {place}")
+    if full and event["description"]:
+        lines.append("")
+        lines.append(event["description"])
+    if event["price"]:
+        lines.append(f"💰 {event['price']}")
+    if full and event["registration_url"]:
+        lines.append(f"🔗 Регистрация: {event['registration_url']}")
+    return "\n".join(lines)
+
+
+def keyboard(rows: list[list[tuple]], inline: bool = False) -> VkKeyboard:
     kb = VkKeyboard(one_time=False, inline=inline)
     for row_index, row in enumerate(rows):
         if row_index:
             kb.add_line()
-        for label, color in row:
-            kb.add_button(label, color=getattr(VkKeyboardColor, color.upper()), payload={"cmd": label})
+        for label, color, *extra in row:
+            payload = {"cmd": label}
+            if extra:
+                payload.update(extra[0])
+            kb.add_button(label, color=getattr(VkKeyboardColor, color.upper()), payload=payload)
     return kb
 
 
@@ -491,12 +583,14 @@ class Bot:
             raise RuntimeError("Не удалось включить Long Poll и событие message_new для сообщества")
 
     def send(self, user_id: int, text: str, kb: VkKeyboard | None = None,
-             editable: bool = True) -> None:
+             editable: bool = True, attachment: str = "") -> None:
         if editable:
             text = self.storage.resolve_text(text)
         params: dict[str, Any] = {"user_id": user_id, "message": text, "random_id": random.getrandbits(31)}
         if kb:
             params["keyboard"] = kb.get_keyboard()
+        if attachment:
+            params["attachment"] = attachment
         self.vk.messages.send(**params)
         self.storage.log_message(user_id, "out", text)
 
@@ -577,10 +671,17 @@ class Bot:
         ]))
 
     def save_lead(self, uid: int, contact: str, user: dict[str, Any]) -> None:
-        kind = user["context"].get("lead_kind", user["topic"] or "Заявка")
-        self.storage.add_lead(uid, kind, contact, user["context"])
-        self.set_state(uid, "done", context=user["context"])
-        thanks = "Спасибо за доверие! Я свяжусь с вами в течение суток." if user["topic"] == "complex_program" else "Спасибо! Я наберу вам в ближайший день."
+        context = user["context"]
+        kind = context.get("lead_kind", user["topic"] or "Заявка")
+        event_id = context.get("event_id")
+        self.storage.add_lead(uid, kind, contact, context, event_id=event_id)
+        self.set_state(uid, "done", context=context)
+        if event_id:
+            thanks = f"Записала вас на встречу «{context.get('event_title', '')}». Напомню накануне, буду рада видеть!"
+        elif user["topic"] == "complex_program":
+            thanks = "Спасибо за доверие! Я свяжусь с вами в течение суток."
+        else:
+            thanks = "Спасибо! Я наберу вам в ближайший день."
         self.send(uid, thanks, keyboard([MENU_ROW]))
         profile = f"https://vk.com/id{uid}"
         notice = f"Новая заявка: {kind}\nПользователь: {profile}\nКонтакт: {contact}\nКонтекст: {json.dumps(user['context'], ensure_ascii=False)}"
@@ -593,12 +694,15 @@ class Bot:
     def handle(self, uid: int, text: str, message: dict[str, Any]) -> None:
         raw = text.strip()
         normalized = raw.casefold()
+        event_id: int | None = None
         payload = message.get("payload")
         if payload:
             try:
                 payload_data = json.loads(payload) if isinstance(payload, str) else payload
                 raw = payload_data.get("cmd") or payload_data.get("command") or raw
                 normalized = raw.casefold()
+                chosen = payload_data.get("event")
+                event_id = int(chosen) if str(chosen).isdigit() else None
             except (ValueError, TypeError):
                 pass
         if normalized in {"меню", "начать", "старт", "/start", "🏠 вернуться в начало", "menu"}:
@@ -637,6 +741,8 @@ class Bot:
         elif state == "services": self.handle_services(uid, raw)
         elif state == "aroma_format": self.handle_aroma(uid, raw)
         elif state == "events": self.handle_events(uid, raw)
+        elif state == "events_list": self.handle_events_list(uid, raw, event_id)
+        elif state == "event_signup": self.handle_event_signup(uid, raw, context)
         elif state == "lead_contact":
             contact = self.extract_contact(raw, message)
             if contact: self.save_lead(uid, contact, user)
@@ -725,10 +831,74 @@ class Bot:
         self.set_state(uid, "lead_contact", topic="aroma", context={"lead_kind": kind})
         self.send(uid, text, self.contact_keyboard())
 
+    def events_list(self, uid: int) -> None:
+        items = self.storage.upcoming_events()
+        if not items:
+            self.set_state(uid, "events", topic="events")
+            self.send(uid, f"Даты ближайших встреч сейчас формируются. Актуальные мероприятия и запись всегда здесь: {self.settings.events_url}",
+                      keyboard([[("📸 Фото и отчёты с прошедших встреч", "secondary")], [(BOOKING_BUTTON, "positive")], MENU_ROW]))
+            return
+        self.set_state(uid, "events_list", topic="events")
+        announce = "\n\n".join(format_event(item) for item in items)
+        rows = [[(event_button_label(item), "primary", {"event": item["id"]})] for item in items]
+        self.send(uid, f"Ближайшие встречи:\n\n{announce}\n\nВыберите встречу, чтобы узнать подробности и записаться 👇",
+                  keyboard(rows + [MENU_ROW]))
+
+    def event_attachment(self, event: dict[str, Any]) -> str:
+        """Загружает картинку встречи в ВК при первой отправке и запоминает её идентификатор."""
+        if event.get("photo_attachment"):
+            return event["photo_attachment"]
+        if not event.get("photo"):
+            return ""
+        path = self.storage.uploads_dir() / event["photo"]
+        if not path.is_file():
+            LOG.warning("Файл картинки мероприятия не найден: %s", path)
+            return ""
+        try:
+            uploaded = vk_api.VkUpload(self.session).photo_messages(str(path))[0]
+            attachment = f"photo{uploaded['owner_id']}_{uploaded['id']}"
+        except Exception:
+            LOG.exception("Не удалось загрузить картинку мероприятия %s", event["id"])
+            return ""
+        self.storage.set_event_attachment(event["id"], attachment)
+        return attachment
+
+    def show_event(self, uid: int, event: dict[str, Any]) -> None:
+        self.set_state(uid, "event_signup", topic="events",
+                       context={"event_id": event["id"], "event_title": event["title"]})
+        self.send(uid, format_event(event, full=True), keyboard([
+            [("✍️ Записаться на встречу", "positive")],
+            [("🗓 Другие встречи", "secondary")], MENU_ROW,
+        ]), attachment=self.event_attachment(event))
+
+    def event_signup(self, uid: int, context: dict[str, Any]) -> None:
+        title = context.get("event_title", "встречу")
+        self.set_state(uid, "lead_contact", topic="events", context={
+            "lead_kind": f"Мероприятие: {title}",
+            "event_id": context.get("event_id"),
+            "event_title": title,
+        })
+        self.send(uid, "Отлично! Оставьте имя и телефон одним сообщением — я запишу вас и напомню о встрече накануне.",
+                  self.contact_keyboard())
+
+    def handle_events_list(self, uid: int, raw: str, event_id: int | None) -> None:
+        event = self.storage.get_event(event_id) if event_id else None
+        if event is None:
+            # Кнопка может прийти без payload — ищем встречу по подписи.
+            event = next((item for item in self.storage.upcoming_events()
+                          if event_button_label(item) == raw), None)
+        if event is None:
+            self.send(uid, "Выберите встречу на клавиатуре."); return
+        self.show_event(uid, event)
+
+    def handle_event_signup(self, uid: int, raw: str, context: dict[str, Any]) -> None:
+        if raw == "✍️ Записаться на встречу": self.event_signup(uid, context)
+        elif raw == "🗓 Другие встречи": self.events_list(uid)
+        else: self.send(uid, "Выберите действие на клавиатуре.")
+
     def handle_events(self, uid: int, raw: str) -> None:
         if raw == "🗓 Ближайшие мероприятия и запись":
-            self.send(uid, f"Актуальные мероприятия и запись всегда здесь: {self.settings.events_url}",
-                      keyboard([[("📸 Фото и отчёты с прошедших встреч", "secondary")], [(BOOKING_BUTTON, "positive")], MENU_ROW]))
+            self.events_list(uid)
         elif raw == "📸 Фото и отчёты с прошедших встреч":
             self.send(uid, f"На прошлом мастер-классе в Звенигороде разбирали, почему после родов спина «не держит». Девушки учились чувствовать свои зажимы и делали упражнения. Улыбки и лёгкость после занятия — лучшее подтверждение, что подход работает.\n\nФото и отчёты: {self.settings.reports_url}",
                       keyboard([[("🗓 Ближайшие мероприятия и запись", "primary")], MENU_ROW]))

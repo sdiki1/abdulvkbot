@@ -5,6 +5,7 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 import admin
@@ -153,6 +154,104 @@ class SettingsTests(AdminTestCase):
             response = self.client.post("/settings", data=self.form(ADMIN_PASSWORD="123"))
         self.assertEqual(response.status_code, 400)
         self.assertNotIn("ADMIN_PASSWORD", self.storage.all_settings())
+
+
+class EventTests(AdminTestCase):
+    PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 32
+
+    def event_form(self, **overrides: Any) -> dict[str, Any]:
+        data = {
+            "csrf_token": self.token(),
+            "title": "Головные боли и шея",
+            "starts_at": "2026-09-05T12:00",
+            "city": "Москва",
+            "address": "проспект Мира, 95",
+            "price": "Бесплатно",
+            "description": "Покажу упражнения.",
+            "registration_url": "",
+            "is_published": "1",
+        }
+        data.update(overrides)
+        return data
+
+    def create_event(self, **overrides: Any) -> int:
+        self.client.post("/events/new", data=self.event_form(**overrides))
+        with self.connect() as conn:
+            return int(conn.execute("SELECT id FROM events ORDER BY id DESC").fetchone()["id"])
+
+    def test_created_event_is_visible_to_the_bot(self) -> None:
+        self.login()
+        event_id = self.create_event()
+
+        upcoming = self.storage.upcoming_events()
+        self.assertEqual([item["id"] for item in upcoming], [event_id])
+        self.assertEqual(upcoming[0]["title"], "Головные боли и шея")
+
+    def test_draft_stays_hidden_from_the_bot(self) -> None:
+        self.login()
+        self.create_event(is_published="0")
+        self.assertEqual(self.storage.upcoming_events(), [])
+
+    def test_event_without_date_is_rejected(self) -> None:
+        self.login()
+        response = self.client.post("/events/new", data=self.event_form(starts_at=""))
+        self.assertEqual(response.status_code, 400)
+        with self.connect() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) c FROM events").fetchone()["c"], 0)
+
+    def test_photo_is_stored_next_to_the_database(self) -> None:
+        self.login()
+        event_id = self.create_event(photo=(io.BytesIO(self.PNG), "poster.png"))
+
+        with self.connect() as conn:
+            name = conn.execute("SELECT photo FROM events WHERE id=?", (event_id,)).fetchone()["photo"]
+        self.assertTrue(name.endswith(".png"))
+        self.assertEqual((self.storage.uploads_dir() / name).read_bytes(), self.PNG)
+
+        response = self.client.get(f"/uploads/{name}")
+        self.assertEqual(response.status_code, 200)
+
+    def test_non_image_upload_is_rejected(self) -> None:
+        self.login()
+        response = self.client.post("/events/new", data=self.event_form(
+            photo=(io.BytesIO(b"<?php echo 1; ?>"), "shell.png")))
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("не похож на картинку", response.get_data(as_text=True))
+        self.assertEqual(list(self.storage.uploads_dir().iterdir()), [])
+
+    def test_replacing_photo_drops_old_file_and_vk_copy(self) -> None:
+        self.login()
+        event_id = self.create_event(photo=(io.BytesIO(self.PNG), "poster.png"))
+        with self.connect() as conn:
+            conn.execute("UPDATE events SET photo_attachment='photo-1_2' WHERE id=?", (event_id,))
+            old = conn.execute("SELECT photo FROM events WHERE id=?", (event_id,)).fetchone()["photo"]
+
+        self.client.post(f"/events/{event_id}", data=self.event_form(
+            photo=(io.BytesIO(self.PNG + b"new"), "another.png")))
+
+        with self.connect() as conn:
+            row = conn.execute("SELECT photo, photo_attachment FROM events WHERE id=?", (event_id,)).fetchone()
+        self.assertNotEqual(row["photo"], old)
+        self.assertEqual(row["photo_attachment"], "", "ВК-копию нужно перезалить")
+        self.assertFalse((self.storage.uploads_dir() / old).exists())
+
+    def test_deleting_event_keeps_the_lead(self) -> None:
+        self.login()
+        event_id = self.create_event()
+        self.add_user()
+        lead_id = self.add_lead()
+        with self.connect() as conn:
+            conn.execute("UPDATE leads SET event_id=? WHERE id=?", (event_id, lead_id))
+
+        response = self.client.post(f"/events/{event_id}/delete", data={"csrf_token": self.token()})
+        self.assertEqual(response.status_code, 302)
+
+        with self.connect() as conn:
+            lead = conn.execute("SELECT * FROM leads WHERE id=?", (lead_id,)).fetchone()
+            events = conn.execute("SELECT COUNT(*) c FROM events").fetchone()["c"]
+        self.assertIsNone(lead["event_id"])
+        self.assertEqual(events, 0)
 
 
 class UsersAndLeadsTests(AdminTestCase):

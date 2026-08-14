@@ -560,6 +560,19 @@ select {
 
 /* ── Карточка пользователя ────────────────────────────────── */
 .detail-grid { display: grid; grid-template-columns: 300px 1fr; gap: 18px; align-items: start; }
+.detail-grid.reverse { grid-template-columns: 1fr 320px; }
+.detail-grid .editor { max-width: none; }
+.nowrap { white-space: nowrap; }
+.thumb { width: 46px; height: 46px; flex: none; border-radius: 9px; object-fit: cover; border: 1px solid var(--line); }
+.photo-row { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+.photo-preview { max-width: 220px; max-height: 150px; border-radius: var(--radius-sm); border: 1px solid var(--line); }
+.photo-remove { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.photo-remove input { width: 17px; height: 17px; accent-color: var(--brand); }
+input[type="file"] { padding: 9px 12px; }
+.field.check { flex-direction: row; display: flex; align-items: center; gap: 11px; }
+.field.check input { width: 18px; height: 18px; accent-color: var(--brand); }
+.field.check small { display: block; color: var(--muted); font-weight: 400; margin-top: 3px; }
+.lead-card a { font-size: 12px; font-weight: 600; text-decoration: none; }
 .profile { text-align: center; }
 .profile h2 { font: 500 21px var(--serif); margin: 10px 0 4px; }
 .profile > a { font-size: 12px; }
@@ -671,6 +684,7 @@ select {
   .dashboard-grid, .dashboard-grid.single { grid-template-columns: 1fr; }
   .text-grid { grid-template-columns: repeat(2, 1fr); }
   .detail-grid { grid-template-columns: 260px 1fr; }
+  .detail-grid.reverse { grid-template-columns: 1fr 280px; }
 }
 
 @media (max-width: 820px) {
@@ -691,7 +705,7 @@ select {
   .logout button { width: auto; font-size: 0; padding: 10px; }
   .main { margin: 0; padding: 20px 16px 50px; }
   .field-grid { grid-template-columns: 1fr; }
-  .detail-grid { grid-template-columns: 1fr; }
+  .detail-grid, .detail-grid.reverse { grid-template-columns: 1fr; }
   .online { display: none; }
   .status-form { flex-wrap: wrap; }
 }

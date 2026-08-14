@@ -27,6 +27,10 @@
       <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2.5 10.5h4l1.2 2.2h4.6l1.2-2.2h4"/><path d="M4.3 4h11.4l1.8 6.5V16a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1v-5.5Z"/></svg>
       Заявки
     </a>
+    <a class="{{ 'active' if request.endpoint in ('events','event_new','event_edit') }}" href="{{ url_for('events') }}">
+      <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="4.5" width="14" height="12.5" rx="2"/><path d="M3 8.5h14M7 3v3M13 3v3"/></svg>
+      Мероприятия
+    </a>
     <a class="{{ 'active' if request.endpoint in ('texts','text_edit') }}" href="{{ url_for('texts') }}">
       <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m12.6 3.9 3.5 3.5L7.5 16H4v-3.5Z"/><path d="M11 5.5 14.5 9"/></svg>
       Тексты бота
