@@ -170,7 +170,7 @@ class ScriptTests(unittest.TestCase):
                 bot, storage, sent = self.make_bot()
                 storage.state = entry
                 sent.clear()
-                self.press(bot, "📅 Записаться на первый приём")
+                self.press(bot, "📅 Записаться на приём")
                 self.assertEqual(storage.state, "booking_city")
                 self.assertIn("6 800 ₽", sent[0][1])
 
